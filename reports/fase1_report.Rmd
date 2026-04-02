@@ -1,0 +1,184 @@
+---
+title: "Fase1_report"
+author: "Ana Filipa Moreira, Diana Oliveira, Márcia Silva e Rodolfo Ferreira"
+date: "2026-03-30"
+output: html_document
+---
+## Objetivos da Fase 1
+
+Nesta primeira fase pretende-se:
+
+* descrever os dados, a sua origem e relevância;
+* realizar a preparação e o pré-processamento inicial dos dados;
+* efetuar uma sumarização dos dados com estatística descritiva e gráficos exploratórios;
+* realizar análise estatística univariada, análise de expressão diferencial e análise de enriquecimento.
+
+## Estrutura da análise
+
+A análise será organizada em diferentes scripts:
+
+* 01_load_data.R — carregamento dos dados
+* 02_preprocessing_clinical.R — limpeza dos dados clínicos
+* 03_preprocessing_expression.R — preparação da matriz de expressão
+* 04_merge_data.R — integração dos dados
+* 05_exploratory_analysis.R — exploração inicial
+* 06_statistical_analysis.R — análise estatística e expressão diferencial
+
+## Introdução
+
+Este trabalho tem como objetivo a análise de um conjunto de dados de expressão génica no contexto do adenocarcinoma do pulmão (Lung Adenocarcinoma, LUAD), utilizando R e ferramentas adequadas para análise de dados biológicos.
+
+O conjunto de dados selecionado foi obtido a partir do cBioPortal, correspondendo ao estudo **Lung Adenocarcinoma (TCGA PanCancer Atlas)**. Este estudo inclui informação clínica dos pacientes, informação ao nível da amostra tumoral e dados de expressão génica obtidos por RNA-seq.
+
+## Origem e relevância dos dados
+
+Os dados utilizados neste trabalho foram obtidos do projeto The Cancer Genome Atlas (TCGA), que disponibiliza informação clínica e molecular de diversos tipos de cancro. Neste estudo, foram analisados dados de expressão génica e variáveis clínicas de pacientes com carcinoma pulmonar de não pequenas células (LUAD).
+
+A integração destes dados permite investigar diferenças biológicas entre grupos de pacientes, nomeadamente entre indivíduos jovens e idosos, contribuindo para uma melhor compreensão da progressão da doença e apoiando abordagens de medicina de precisão.
+
+Foram utilizados três ficheiros principais:
+
+* data_clinical_patient.txt: informação clínica ao nível do paciente 
+* data_clinical_sample.txt: informação ao nível da amostra tumoral
+* data_mrna_seq_v2_rsem.txt: dados de expressão genética
+
+```{r}
+source("../scripts/01_load_data.R")
+```
+
+De forma preliminar, os dados carregados incluem:
+```{r}
+dim(clinical_patient)
+dim(clinical_sample)
+dim(expr)
+```
+
+### Variáveis Identificadoras
+
+Incluem identificadores únicos das amostras e dos pacientes:
+
+- **PATIENT_ID** – identificador do paciente (ex: TCGA-05-4244)  
+- **SAMPLE_ID** – identificador da amostra (ex: TCGA-05-4244-01)  
+
+Estas variáveis são do tipo **character** e são utilizadas para integração entre dados clínicos, moleculares e de expressão génica.
+
+---
+
+### Variáveis Clínicas e Categóricas
+
+Incluem informação demográfica, clínica e de caracterização tumoral:
+
+- **CANCER_TYPE_ACRONYM** – tipo de cancro (ex: LUAD)  
+- **SEX** – sexo do paciente (Male/Female)  
+- **AJCC_PATHOLOGIC_TUMOR_STAGE** – estádio tumoral global (Stage I–IV)  
+- **PATH_T_STAGE** – componente T do estadiamento (tamanho/extensão do tumor)  
+- **PATH_N_STAGE** – componente N (envolvimento ganglionar)  
+- **PATH_M_STAGE** – componente M (metástases)  
+- **OS_STATUS** – estado de sobrevivência (LIVING/DECEASED)  
+- **PFS_STATUS** – estado de progressão da doença (CENSORED/PROGRESSION)  
+- **GENETIC_ANCESTRY_LABEL** – ancestralidade genética (ex: EUR)  
+
+Estas variáveis são do tipo **character**, sendo algumas **ordinais** (ex: estádios TNM e AJCC).
+
+---
+
+### Variáveis Numéricas Clínicas
+
+Incluem métricas quantitativas associadas ao paciente e ao prognóstico:
+
+- **AGE** – idade do paciente no diagnóstico (anos)  
+- **OS_MONTHS** – tempo de sobrevivência global (meses)  
+- **PFS_MONTHS** – tempo até progressão da doença (meses)  
+
+Estas variáveis são do tipo **numérico contínuo**.
+
+---
+
+### Variáveis Moleculares
+
+Incluem métricas associadas à biologia tumoral:
+
+- **ANEUPLOIDY_SCORE** – grau de instabilidade cromossómica  
+- **MSI_SCORE_MANTIS** – score de instabilidade de microssatélites  
+- **TMB_NONSYNONYMOUS** – carga mutacional tumoral (TMB)  
+
+Estas variáveis são do tipo **numérico contínuo** e refletem diferentes mecanismos de instabilidade genómica.
+
+---
+
+### Variáveis de Expressão Génica
+Correspondem ao dataset **expr_final**:
+
+- **Gene_ID / Gene Symbol** – identificador do gene (ex: UBE2Q2P2, HMGB1P1)  
+- **Amostras (colunas)** – cada coluna corresponde a uma amostra (ex: TCGA-05-4244-01), compatível com **SAMPLE_ID**
+Os valores da matriz representam:
+- níveis de expressão génica normalizados (**RSEM**)  
+- transformados em **escala log2**, o que reduz assimetria e estabiliza a variância
+
+## Preprocessamento dos dados clínicos
+
+```{r}
+source("../scripts/02_preprocessing_clinical.R")
+```
+
+Nesta etapa foi realizada a limpeza e preparação dos dados clínicos e das amostras. Inicialmente, foram selecionadas apenas as variáveis relevantes para a análise, incluindo características demográficas, estádios tumorais e métricas associadas à sobrevivência e carga tumoral .
+
+De seguida, valores vazios foram convertidos em valores ausentes (NA), e foram removidas entradas sem identificadores válidos de paciente ou amostra, garantindo a consistência dos dados. As variáveis numéricas foram convertidas para o formato adequado, permitindo a sua utilização em análises estatísticas.
+
+Foi também efetuada a limpeza das variáveis de estado (como sobrevivência e progressão), removendo prefixos desnecessários, e as variáveis categóricas foram convertidas para o tipo factor, facilitando a sua utilização em modelos e visualizações.
+
+Por fim, foram realizadas verificações básicas da estrutura dos dados, incluindo dimensões e distribuições das principais variáveis, assegurando a qualidade do dataset antes das etapas seguintes.
+
+## Preparação da matriz de expressão
+
+```{r}
+source("../scripts/03_preprocessing_expression.R")
+```
+
+Nesta etapa foi realizada a preparação da matriz de expressão génica para análise. Inicialmente, foi identificada a coluna contendo os identificadores dos genes e selecionadas apenas as colunas correspondentes às amostras, excluindo possíveis colunas de anotação .
+
+De seguida, os dados foram convertidos para formato numérico e organizados numa matriz com genes nas linhas e amostras nas colunas. Foram removidos genes sem identificador válido e duplicados, garantindo a consistência da matriz.
+
+Posteriormente, foram eliminados genes com valores em falta (NA), e aplicada uma filtragem para remover genes pouco expressos, mantendo apenas aqueles com expressão relevante em pelo menos 10% das amostras.
+
+Por fim, foi aplicada uma transformação logarítmica (log2), com o objetivo de estabilizar a variância dos dados e facilitar análises exploratórias, como PCA e visualizações. Foram ainda realizadas verificações descritivas para avaliar a distribuição dos valores e a consistência entre amostras.
+
+## Integração dos dados
+
+```{r}
+source("../scripts/04_merge_data.R")
+```
+
+Nesta etapa foi realizada a integração dos dados clínicos e da matriz de expressão génica. Inicialmente, os dados clínicos ao nível do paciente e da amostra foram combinados com base no identificador do paciente (PATIENT_ID), criando um dataset clínico unificado .
+
+De seguida, os identificadores das amostras na matriz de expressão foram ajustados para garantir consistência de formato, permitindo a correspondência com os identificadores presentes nos dados clínicos. Foram então identificadas as amostras comuns entre os dois datasets.
+
+A matriz de expressão génica e o dataset clínico foram filtrados de forma a manter apenas essas amostras em comum. Posteriormente, foi assegurada a correta correspondência entre ambos através do alinhamento da ordem das amostras.
+
+Por fim, foram realizadas verificações de consistência, garantindo que os identificadores das amostras coincidiam entre os dois datasets e confirmando as dimensões finais dos dados integrados, prontos para análise.
+
+## Exploração Estatistica 
+
+```{r}
+source("../scripts/aa.R")
+```
+Observa-se uma maior predominância de pacientes nos estádios iniciais (IA e IB), enquanto os estádios mais avançados apresentam menor representação. Esta distribuição sugere um possível desequilíbrio no dataset, o que deve ser considerado na interpretação dos resultados.
+
+## Análise estatística e expressão diferencial
+
+```{r}
+source("../scripts/06_statistical_analysis.R")
+```
+```{r}
+source("../scripts/bb.R")
+```
+```{r}
+source("../scripts/07_enrichment_analysis.R")
+```
+
+
+```{r}
+table(sign(deg$logFC))
+```
+
+
