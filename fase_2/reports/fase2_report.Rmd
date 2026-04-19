@@ -1,0 +1,64 @@
+---
+title: "Fase2_report"
+author: "Ana Filipa Moreira, Diana Oliveira, Márcia Silva e Rodolfo Ferreira"
+date: "2026-04-17"
+output: html_document
+---
+## Objetivos da Fase 2
+
+Nesta segunda fase pretende-se:
+
+* aplicar métodos de análise não supervisionada para explorar a estrutura global dos dados
+* realizar a redução de dimensionalidade através de técnicas de PCA (Principal Component Analysis) e MDS   (Multidimensional Scaling)
+* identificar padrões naturais de agrupamento entre amostras e genes através de clustering hierárquico e visualização por heatmaps
+* investigar a existência de assinaturas moleculares que permitam distinguir subgrupos de pacientes independentemente da variável idade
+
+## Estrutura da análise
+
+A análise da segunda fase é complementada pelo seguinte script:
+
+* 08_unsupervised_analysis.R — análise não supervisionada (PCA, MDS e Clustering)
+
+```{r setup, include=FALSE, results='hide', message=FALSE, warning=FALSE}
+source("../scripts/01_load_data.R")
+source("../scripts/02_preprocessing_clinical.R")
+source("../scripts/03_preprocessing_expression.R")
+source("../scripts/04_merge_data.R")
+```
+
+
+## Introdução
+
+Este trabalho tem como objetivo dar continuidade à análise do conjunto de dados de expressão génica no contexto do adenocarcinoma do pulmão (Lung Adenocarcinoma, LUAD), focando-se na aplicação de métodos de análise não supervisionada através da linguagem R e de ferramentas bioinformáticas.
+
+Partindo do conjunto de dados obtido do cBioPortal, correspondente ao estudo Lung Adenocarcinoma (TCGA PanCancer Atlas), esta segunda fase foca-se na exploração da estrutura global e na organização natural dos dados. O estudo integra análises de redução de dimensionalidade e agrupamento hierárquico, permitindo investigar a existência de assinaturas moleculares e verificar se a variabilidade transcriptómica global reflete a estratificação etária previamente analisada.
+
+```{r}
+source("../scripts/08_unsupervised_analysis.R")
+```
+
+#### PCA dos dados de expressão
+
+A análise de componentes principais (PCA) evidencia que os dois primeiros componentes explicam, respetivamente, 15.3% (PC1) e 10.2% (PC2) da variabilidade total dos dados. Observa-se uma sobreposição quase total entre as amostras dos grupos de pacientes jovens e idosos no espaço bidimensional, indicando que a idade não constitui o fator dominante na estruturação global do transcriptoma nesta coorte de LUAD. Este resultado sugere que a variabilidade biológica capturada nos eixos principais é influenciada por uma multiplicidade de fatores intrínsecos ao tumor que transcendem a idade biológica do indivíduo no momento do diagnóstico. A dispersão homogénea dos pontos reflete a elevada heterogeneidade biológica característica do adenocarcinoma do pulmão, evidenciando que as diferenças transcricionais associadas ao envelhecimento são subtis e não geram uma separação global nítida entre os grupos analisados.
+
+
+#### MDS das amostras
+
+O escalamento multidimensional (MDS) apresenta a distribuição das amostras com base nas distâncias biológicas calculadas pelo leading log-fold-change. À semelhança do observado na PCA, verifica-se a ausência de agrupamentos discretos baseados no grupo etário, com as amostras de pacientes jovens e idosos distribuídas de forma intercalada ao longo das dimensões analisadas. A presença de padrões de agrupamento específicos sugere a existência de subgrupos moleculares ou trajetórias de expressão comuns que ocorrem independentemente da idade dos pacientes. No seu conjunto, estes resultados reforçam a conclusão de que a arquitetura global da expressão génica é conservada entre os grupos, indicando que as alterações biológicas relevantes associadas à idade se manifestam de forma mais robusta ao nível de genes ou vias funcionais específicas, em detrimento de uma alteração estrutural massiva do perfil molecular global.
+
+
+#### Heatmap dos genes mais variáveis
+
+Os dados foram organizados com base em clustering hierárquico, tanto ao nível das amostras como dos genes, permitindo identificar grupos com perfis de expressão semelhantes. De forma geral, não se observam agrupamentos bem definidos das amostras, sugerindo a ausência de uma separação clara entre os grupos em estudo com base no perfil global de expressão génica. Este resultado indica que as diferenças entre os grupos são subtis e não dominam a variabilidade total dos dados. Por outro lado, verifica-se um agrupamento nítido ao nível dos genes, sugerindo a presença de conjuntos de genes com padrões de expressão semelhantes associados a mecanismos regulatórios comuns. Adicionalmente, observa-se uma elevada heterogeneidade entre as amostras, característica frequentemente associada a dados de tumores, refletindo a complexidade biológica e a variabilidade interindividual.
+
+
+#### Clustering hierárquico dos genes
+
+A análise do dendrograma dos genes revela a formação de clusters bem definidos, correspondentes a conjuntos de genes com padrões de expressão correlacionados. Destaca-se um agrupamento contendo genes como RPS4Y1, DDX3Y, KDM5D e UTY, todos localizados no cromossoma Y, o que sugere um contributo importante do sexo biológico para a estrutura global dos dados. A presença simultânea de genes como XIST reforça esta interpretação. Para além disso, observam-se outros agrupamentos envolvendo genes como MUC5B e SFTPC, compatíveis com assinaturas funcionais associadas ao epitélio pulmonar e à heterogeneidade intrínseca das amostras tumorais.
+
+
+#### Conclusão
+
+A análise integrada da coorte TCGA-LUAD mostrou que a idade não promove uma reestruturação global marcada do transcriptoma tumoral, mas pode estar associada a alterações mais subtis e específicas ao nível de genes e vias funcionais. As abordagens não supervisionadas, incluindo PCA, MDS, clustering hierárquico e heatmap, evidenciaram elevada heterogeneidade biológica entre amostras e ausência de uma separação estrutural nítida entre os grupos etários, sugerindo que a variabilidade transcriptómica do LUAD é influenciada por múltiplos fatores biológicos para além da idade cronológica.
+
+Por outro lado, a identificação de genes diferencialmente expressos e a análise funcional apontaram para alterações biologicamente relevantes em processos específicos. Em particular, a integração dos resultados na via do ciclo celular sugeriu uma tendência para menor expressão de genes associados à proliferação no grupo dos indivíduos mais idosos, compatível com diferenças funcionais no comportamento tumoral. Em conjunto, estes resultados reforçam a complexidade biológica do adenocarcinoma do pulmão e sublinham a importância de abordagens de medicina de precisão que considerem a heterogeneidade molecular e funcional dos tumores para além de classificações clínicas simples, como a idade.
