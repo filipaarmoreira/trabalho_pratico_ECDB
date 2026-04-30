@@ -1,0 +1,462 @@
+---
+title: "Fase 2 – Análise Não Supervisionada: LUAD (TCGA PanCancer Atlas)"
+author: "Ana Filipa Moreira, Diana Oliveira, Márcia Silva e Rodolfo Ferreira"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo      = FALSE,
+  message   = FALSE,
+  warning   = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 6
+)
+
+# Packages
+library(Biobase)
+library(limma)
+library(pheatmap)
+library(Rtsne)
+library(uwot)
+library(cluster)
+
+# Preparação dos dados
+source("../scripts/01_load_data.R")
+source("../scripts/02_preprocessing_clinical.R")
+source("../scripts/03_preprocessing_expression.R")
+source("../scripts/04_merge_data.R")
+
+# Criar STAGE_GROUP (necessário para anotações)
+meta <- pData(eset)
+meta$STAGE_GROUP <- NA
+meta$STAGE_GROUP[meta$AJCC_PATHOLOGIC_TUMOR_STAGE %in% c(
+  "STAGE I", "STAGE IA", "STAGE IB",
+  "STAGE II", "STAGE IIA", "STAGE IIB")] <- "Early"
+meta$STAGE_GROUP[meta$AJCC_PATHOLOGIC_TUMOR_STAGE %in% c(
+  "STAGE IIIA", "STAGE IIIB", "STAGE IV")] <- "Advanced"
+meta$STAGE_GROUP <- factor(meta$STAGE_GROUP, levels = c("Early", "Advanced"))
+pData(eset) <- meta
+
+# Preparação para análise não supervisionada
+keep       <- !is.na(pData(eset)$AGE)
+eset_unsup <- eset[, keep]
+meta_unsup <- pData(eset_unsup)
+
+mediana_idade <- median(meta_unsup$AGE, na.rm = TRUE)
+meta_unsup$Grupo_Idade <- factor(
+  ifelse(meta_unsup$AGE < mediana_idade, "Jovem", "Idoso"),
+  levels = c("Jovem", "Idoso")
+)
+pData(eset_unsup) <- meta_unsup
+
+# Remover genes com variância zero e selecionar mais variáveis
+gene_var  <- apply(exprs(eset_unsup), 1, var, na.rm = TRUE)
+eset_var  <- eset_unsup[gene_var > 0, ]
+gene_var2 <- apply(exprs(eset_var), 1, var, na.rm = TRUE)
+
+top_genes_dimred <- names(sort(gene_var2, decreasing = TRUE))[1:min(500, nrow(eset_var))]
+top_genes_vis    <- names(sort(gene_var2, decreasing = TRUE))[1:min(40,  nrow(eset_var))]
+
+expr_dimred <- exprs(eset_var[top_genes_dimred, ])
+expr_vis    <- exprs(eset_var[top_genes_vis, ])
+meta_final  <- pData(eset_var)
+
+grupo_col <- ifelse(meta_final$Grupo_Idade == "Jovem", "steelblue", "tomato")
+
+# PCA
+pca         <- prcomp(t(expr_dimred), scale. = TRUE)
+pca_summary <- summary(pca)$importance
+var_pc1     <- round(100 * pca_summary[2, 1], 1)
+var_pc2     <- round(100 * pca_summary[2, 2], 1)
+n_pcs_80    <- min(which(pca_summary[3, ] >= 0.80))
+
+# MDS clássico
+dist_amostras <- dist(t(expr_dimred), method = "euclidean")
+mds_classico  <- cmdscale(dist_amostras, k = 2, eig = TRUE)
+var_mds1 <- round(mds_classico$eig[1] / sum(abs(mds_classico$eig)) * 100, 1)
+var_mds2 <- round(mds_classico$eig[2] / sum(abs(mds_classico$eig)) * 100, 1)
+
+# MDS limma
+mds <- plotMDS(expr_dimred, plot = FALSE)
+
+# t-SNE
+expr_t         <- t(expr_dimred)
+dup_rows       <- duplicated(expr_t)
+expr_t_nd      <- expr_t[!dup_rows, ]
+meta_tsne      <- meta_final[!dup_rows, ]
+grupo_col_tsne <- grupo_col[!dup_rows]
+set.seed(42)
+res_tsne <- Rtsne(expr_t_nd, dims = 2,
+                  perplexity = min(30, floor((nrow(expr_t_nd) - 1) / 3)),
+                  verbose = FALSE, max_iter = 1000)
+
+# UMAP
+set.seed(42)
+umap_res <- umap(expr_t_nd,
+                 n_neighbors  = min(15, nrow(expr_t_nd) - 1),
+                 min_dist     = 0.1, metric = "euclidean",
+                 n_components = 2, verbose = FALSE)
+
+# Clustering hierárquico
+dist_genes    <- dist(expr_vis, method = "euclidean")
+hc_genes      <- hclust(dist_genes, method = "complete")
+dist_samples  <- dist(t(expr_vis), method = "euclidean")
+hc_samples    <- hclust(dist_samples, method = "complete")
+clusters_hier <- cutree(hc_samples, k = 2)
+
+# Anotações para heatmap
+vars_annot <- c("Grupo_Idade")
+if ("STAGE_GROUP" %in% colnames(meta_final)) vars_annot <- c(vars_annot, "STAGE_GROUP")
+if ("SEX"         %in% colnames(meta_final)) vars_annot <- c(vars_annot, "SEX")
+annotation_col <- meta_final[, vars_annot, drop = FALSE]
+rownames(annotation_col) <- colnames(expr_vis)
+
+# K-means
+set.seed(123)
+wss <- c()
+for (k in 2:10) {
+  km_tmp <- kmeans(t(expr_vis), centers = k, nstart = 25)
+  wss    <- c(wss, sum(km_tmp$withinss))
+}
+set.seed(123)
+km <- kmeans(t(expr_vis), centers = 2, nstart = 25)
+```
+
+# Objetivos da Fase 2
+
+Nesta segunda fase pretende-se explorar a estrutura global dos dados de expressão génica do LUAD através de métodos de análise não supervisionada:
+
+- **Redução de dimensionalidade**: PCA, MDS clássico, MDS Leading LogFC, t-SNE e UMAP
+- **Clustering**: hierárquico (genes e amostras) e k-means com seleção do número ótimo de clusters
+- **Visualização integrada**: heatmaps com anotações clínicas e elbow method
+
+A variável de interesse principal é o grupo etário (Jovem / Idoso, com corte na mediana da idade), explorando também as associações dos agrupamentos com o estádio tumoral e o sexo.
+
+---
+
+# Estrutura da análise
+
+A análise desta fase está organizada no seguinte script:
+
+- `08_unsupervised_analysis.R` — PCA, MDS, t-SNE, UMAP, clustering hierárquico e k-means
+
+---
+
+# Introdução
+
+Esta segunda fase dá continuidade à análise do conjunto de dados LUAD-TCGA, focando-se na exploração da estrutura global e na organização natural dos dados através de métodos não supervisionados. Ao contrário da Fase 1, onde se partiu de uma hipótese definida (Early vs Advanced), aqui os algoritmos não recebem qualquer informação sobre os grupos — o objetivo é perceber se os dados conseguem organizar-se de forma natural e se essa organização corresponde a alguma variável clínica conhecida.
+
+---
+
+# Preparação dos Dados
+
+Partindo do `ExpressionSet` construído na Fase 1, foram mantidas apenas as amostras com idade disponível e removidos genes com variância zero. Os doentes foram divididos em dois grupos etários usando a mediana da idade como corte — esta divisão serve apenas para colorir os gráficos, não é usada pelos algoritmos.
+
+```{r prep_info}
+cat("Mediana da idade (corte Jovem/Idoso):", mediana_idade, "anos\n")
+cat("\nDistribuição por grupo etário:\n")
+print(table(meta_final$Grupo_Idade, useNA = "ifany"))
+cat("\nGenes usados para PCA/MDS/t-SNE/UMAP:", nrow(expr_dimred), "\n")
+cat("Genes usados para clustering/heatmap:", nrow(expr_vis), "\n")
+```
+
+Para as análises de redução de dimensionalidade foram selecionados os **top 500 genes mais variáveis**; para clustering e heatmap foram usados os **top 40 genes mais variáveis**, por compromisso entre legibilidade e informação.
+
+---
+
+# Redução de Dimensionalidade
+
+## Análise de Componentes Principais (PCA)
+
+A PCA converte os milhares de genes num conjunto de novas variáveis não correlacionadas, as **componentes principais (PCs)**, ordenadas pela quantidade decrescente de variabilidade que explicam. O resultado permite visualizar todas as amostras num gráfico bidimensional, onde amostras com perfis de expressão semelhantes ficam próximas.
+
+```{r pca_scree, fig.cap="Scree plot: variância explicada por cada componente principal."}
+var_explicada <- pca_summary[2, 1:min(30, ncol(pca$x))]
+barplot(
+  var_explicada * 100,
+  names.arg = paste0("PC", seq_along(var_explicada)),
+  col = "steelblue", las = 2,
+  main = "Scree plot — variância explicada por PC",
+  xlab = "Componente Principal",
+  ylab = "Variância explicada (%)"
+)
+```
+
+```{r pca_acum, fig.cap="Variância acumulada explicada pela PCA. A linha vermelha marca os 80%."}
+var_acum <- pca_summary[3, 1:min(30, ncol(pca$x))]
+plot(
+  seq_along(var_acum), var_acum * 100,
+  type = "b", pch = 19, col = "steelblue",
+  xlab = "Número de PCs", ylab = "Variância acumulada (%)",
+  main = "Variância acumulada explicada pela PCA"
+)
+abline(h = 80, lty = 2, col = "red")
+legend("bottomright", "80% variância", lty = 2, col = "red", bty = "n")
+```
+
+Os dois primeiros componentes explicam **`r var_pc1`%** (PC1) e **`r var_pc2`%** (PC2) da variabilidade total. Para explicar pelo menos 80% da variância são necessários **`r n_pcs_80` PCs**, evidenciando a elevada complexidade biológica dos dados.
+
+```{r pca_scores, fig.cap="Score plot PCA: cada ponto é uma amostra. Azul = Jovem; Vermelho = Idoso."}
+plot(
+  pca$x[, 1], pca$x[, 2],
+  col = grupo_col, pch = 16,
+  xlab = paste0("PC1 (", var_pc1, "%)"),
+  ylab = paste0("PC2 (", var_pc2, "%)"),
+  main = "PCA das amostras"
+)
+legend("bottomright", legend = c("Jovem", "Idoso"),
+       col = c("steelblue", "tomato"), pch = 16,
+       title = "Grupo Etário", bty = "n")
+```
+
+Observa-se uma sobreposição quase total entre os grupos etários no espaço PCA, indicando que a idade não é o fator dominante na estruturação global do transcriptoma desta coorte.
+
+```{r pca_sexo, fig.cap="Score plot PCA colorido por sexo. Verde = Female; Laranja = Male."}
+sex_col <- ifelse(meta_final$SEX == "Female", "forestgreen", "darkorange")
+sex_col[is.na(meta_final$SEX)] <- "grey70"
+
+plot(
+  pca$x[, 1], pca$x[, 2],
+  col = sex_col, pch = 16,
+  xlab = paste0("PC1 (", var_pc1, "%)"),
+  ylab = paste0("PC2 (", var_pc2, "%)"),
+  main = "PCA das amostras — colorido por Sexo"
+)
+legend("bottomright", legend = c("Female", "Male", "NA"),
+       col = c("forestgreen", "darkorange", "grey70"),
+       pch = 16, title = "Sexo", bty = "n")
+```
+
+```{r pca_estadio, fig.cap="Score plot PCA colorido por estádio. Verde = Early; Laranja = Advanced."}
+stage_col <- rep("grey70", nrow(meta_final))
+stage_col[meta_final$STAGE_GROUP == "Early"]    <- "forestgreen"
+stage_col[meta_final$STAGE_GROUP == "Advanced"] <- "darkorange"
+
+plot(
+  pca$x[, 1], pca$x[, 2],
+  col = stage_col, pch = 16,
+  xlab = paste0("PC1 (", var_pc1, "%)"),
+  ylab = paste0("PC2 (", var_pc2, "%)"),
+  main = "PCA das amostras — colorido por Estádio"
+)
+legend("bottomright", legend = c("Early", "Advanced", "NA"),
+       col = c("forestgreen", "darkorange", "grey70"),
+       pch = 16, title = "Estádio", bty = "n")
+```
+
+Ao colorir as mesmas amostras por sexo, observa-se uma separação muito mais marcada do que a observada por grupo etário, confirmando que o sexo biológico é o fator que mais estrutura a variabilidade global do transcriptoma nesta coorte. A coloração por estádio não revela separação clara, consistente com os resultados da análise diferencial da Fase 1.
+
+---
+
+## MDS Clássico
+
+O MDS (*Multidimensional Scaling*) parte de uma matriz de distâncias entre amostras e tenta colocá-las num espaço de menor dimensão preservando essas distâncias. O MDS clássico (`cmdscale`) usa distâncias euclidianas e calcula as coordenadas através dos eigenvalues da matriz de distâncias centrada.
+
+```{r mds_classico, fig.cap="MDS clássico: coordenadas baseadas em distâncias euclidianas entre amostras."}
+plot(
+  mds_classico$points[, 1], mds_classico$points[, 2],
+  col = grupo_col, pch = 16,
+  xlab = paste0("Coordenada 1 (", var_mds1, "%)"),
+  ylab = paste0("Coordenada 2 (", var_mds2, "%)"),
+  main = "MDS clássico das amostras"
+)
+legend("bottomright", legend = c("Jovem", "Idoso"),
+       col = c("steelblue", "tomato"), pch = 16,
+       title = "Grupo Etário", bty = "n")
+```
+
+À semelhança da PCA, não se observa separação clara entre grupos etários. A primeira coordenada explica **`r var_mds1`%** e a segunda **`r var_mds2`%** da variabilidade total.
+
+```{r mds_classico_sexo, fig.cap="MDS clássico colorido por sexo."}
+plot(
+  mds_classico$points[, 1], mds_classico$points[, 2],
+  col = sex_col, pch = 16,
+  xlab = paste0("Coordenada 1 (", var_mds1, "%)"),
+  ylab = paste0("Coordenada 2 (", var_mds2, "%)"),
+  main = "MDS clássico — colorido por Sexo"
+)
+legend("bottomright", legend = c("Female", "Male", "NA"),
+       col = c("forestgreen", "darkorange", "grey70"),
+       pch = 16, title = "Sexo", bty = "n")
+```
+
+A coloração por sexo no MDS confirma o padrão observado na PCA, há uma tendência de separação por sexo que não existe por grupo etário.
+
+---
+
+## MDS Leading LogFC
+
+O `plotMDS` do package `limma` usa uma variante do MDS baseada nas distâncias de *leading log-fold-change*. Para cada par de amostras, calcula a distância com base nos genes que mais as diferenciam. Esta abordagem é mais sensível a diferenças biológicas do que o MDS clássico.
+
+```{r mds_limma, fig.cap="MDS Leading LogFC (limma): colorido por sexo."}
+plot(
+  mds$x, mds$y,
+  col = sex_col, pch = 16,
+  xlab = "Leading logFC dim 1",
+  ylab = "Leading logFC dim 2",
+  main = "MDS (Leading logFC) das amostras — colorido por Sexo"
+)
+legend("bottomright", legend = c("Female", "Male", "NA"),
+       col = c("forestgreen", "darkorange", "grey70"), pch = 16,
+       title = "Sexo", bty = "n")
+```
+
+O MDS Leading LogFC, sendo mais sensível a diferenças biológicas entre amostras, evidencia uma tendência de separação por sexo mais marcada do que qualquer outra variável clínica testada.
+
+---
+
+## t-SNE
+
+O t-SNE (*t-Distributed Stochastic Neighbor Embedding*) é uma técnica não linear de redução de dimensionalidade, especialmente indicada para visualização em 2D. Ao contrário da PCA e do MDS, preserva principalmente a estrutura **local** dos dados. Amostras muito semelhantes ficam muito próximas, mas as distâncias globais não são necessariamente preservadas.
+
+```{r tsne, fig.cap="t-SNE das amostras, colorido por sexo."}
+sex_col_tsne <- ifelse(meta_tsne$SEX == "Female", "forestgreen", "darkorange")
+sex_col_tsne[is.na(meta_tsne$SEX)] <- "grey70"
+
+plot(
+  res_tsne$Y[, 1], res_tsne$Y[, 2],
+  col = sex_col_tsne, pch = 16,
+  xlab = "t-SNE 1", ylab = "t-SNE 2",
+  main = "t-SNE das amostras — colorido por Sexo"
+)
+legend("bottomright", legend = c("Female", "Male", "NA"),
+       col = c("forestgreen", "darkorange", "grey70"), pch = 16,
+       title = "Sexo", bty = "n")
+```
+
+O t-SNE revela subgrupos naturais nos dados que correspondem claramente ao sexo biológico, confirmando que este é o fator dominante na estrutura transcriptómica global desta coorte.
+
+---
+
+## UMAP
+
+O UMAP (*Uniform Manifold Approximation and Projection*) é uma alternativa mais recente ao t-SNE, amplamente utilizada em bioinformática. Preserva tanto a estrutura local como parte da estrutura global dos dados, sendo geralmente mais rápido e mais estável que o t-SNE.
+
+```{r umap, fig.cap="UMAP das amostras, colorido por sexo."}
+plot(
+  umap_res[, 1], umap_res[, 2],
+  col = sex_col_tsne, pch = 16,
+  xlab = "UMAP 1", ylab = "UMAP 2",
+  main = "UMAP das amostras — colorido por Sexo"
+)
+legend("bottomright", legend = c("Female", "Male", "NA"),
+       col = c("forestgreen", "darkorange", "grey70"), pch = 16,
+       title = "Sexo", bty = "n")
+```
+
+O UMAP confirma o padrão observado no t-SNE, os subgrupos naturais que emergem nos dados correspondem ao sexo biológico, com amostras femininas e masculinas a separarem-se de forma clara.
+
+**Conclusão da redução de dimensionalidade:** A PCA e o MDS clássico mostram que a idade não estrutura os dados. O MDS Leading LogFC, o t-SNE e o UMAP, coloridos por sexo, revelam que o sexo biológico é o fator dominante na variabilidade transcriptómica global desta coorte de LUAD.
+
+---
+
+# Clustering
+
+## Clustering Hierárquico dos Genes
+
+O clustering hierárquico agrupa iterativamente os elementos com perfis mais semelhantes, construindo uma hierarquia representada por um dendrograma. Usou-se distância euclidiana e *complete linkage*. A distância entre dois grupos é a distância máxima entre os seus elementos.
+
+```{r hclust_genes, fig.cap="Dendrograma do clustering hierárquico dos genes (top 40 mais variáveis)."}
+plot(hc_genes,
+     main = "Clustering hierárquico dos genes",
+     xlab = "", sub = "", cex = 0.8)
+```
+
+O dendrograma revela clusters bem definidos de genes com perfis de expressão correlacionados. Destaca-se um agrupamento com genes do cromossoma Y (RPS4Y1, DDX3Y, KDM5D, UTY) e XIST, evidenciando que o **sexo biológico** é o fator que mais estrutura a variabilidade global dos dados — mais do que a idade.
+
+## Heatmap com Anotações Clínicas
+
+```{r heatmap, fig.cap="Heatmap dos top 40 genes mais variáveis. As barras de anotação indicam o grupo etário, o estádio e o sexo.", fig.height=9}
+pheatmap(
+  expr_vis,
+  scale             = "row",
+  show_colnames     = FALSE,
+  annotation_col    = annotation_col,
+  clustering_method = "complete",
+  main              = "Heatmap dos genes mais variáveis (top 40)",
+  fontsize_row      = 7
+)
+```
+
+O heatmap confirma os padrões observados no dendrograma. Os genes do cromossoma Y e o XIST formam clusters muito nítidos, separando amostras de sexo masculino e feminino. A barra de anotação do sexo é claramente a que mais se alinha com os clusters de amostras, enquanto o grupo etário e o estádio não mostram correspondência tão evidente.
+
+## Clustering Hierárquico das Amostras
+
+```{r hclust_samples, fig.cap="Dendrograma do clustering hierárquico das amostras."}
+plot(hc_samples,
+     labels = FALSE,
+     main   = "Clustering hierárquico das amostras",
+     xlab   = "", sub = "")
+```
+
+```{r hclust_tables}
+cat("Clusters hierárquicos (k=2) vs Grupo_Idade:\n")
+print(table(clusters_hier, meta_final$Grupo_Idade))
+
+if ("STAGE_GROUP" %in% colnames(meta_final)) {
+  cat("\nClusters hierárquicos (k=2) vs STAGE_GROUP:\n")
+  print(table(clusters_hier, meta_final$STAGE_GROUP))
+}
+
+if ("SEX" %in% colnames(meta_final)) {
+  cat("\nClusters hierárquicos (k=2) vs SEX:\n")
+  print(table(clusters_hier, meta_final$SEX))
+}
+```
+
+As tabelas de contingência permitem verificar se os clusters encontrados correspondem a alguma variável clínica. A correspondência com o sexo é a mais marcada, confirmando que é o fator dominante na estrutura global dos dados.
+
+---
+
+## K-means: Elbow Method e Análise Final
+
+O k-means divide as amostras em k grupos minimizando a distância intra-cluster. O parâmetro k tem de ser definido pelo utilizador para o escolher de forma justificada usou-se o **elbow method**: calcula-se a WSS (*within-cluster sum of squares*) para diferentes valores de k e procura-se o "cotovelo", o ponto onde o ganho começa a diminuir.
+
+```{r elbow, fig.cap="Elbow method: WSS para k = 2 a 10. O cotovelo indica o número ótimo de clusters."}
+plot(
+  2:10, wss,
+  type = "b", pch = 19, col = "steelblue",
+  xlab = "Número de clusters (k)",
+  ylab = "WSS total",
+  main = "Elbow method — escolha do k ótimo"
+)
+```
+
+```{r kmeans_res}
+cat("Distribuição dos clusters k-means (k=2):\n")
+print(table(km$cluster))
+
+cat("\nClusters k-means vs Grupo_Idade:\n")
+print(table(km$cluster, meta_final$Grupo_Idade))
+
+if ("STAGE_GROUP" %in% colnames(meta_final)) {
+  cat("\nClusters k-means vs STAGE_GROUP:\n")
+  print(table(km$cluster, meta_final$STAGE_GROUP))
+}
+
+if ("SEX" %in% colnames(meta_final)) {
+  cat("\nClusters k-means vs SEX:\n")
+  print(table(km$cluster, meta_final$SEX))
+}
+```
+
+O k-means foi aplicado com k=2 e `nstart=25` — o algoritmo é reiniciado 25 vezes com inicializações aleatórias diferentes, garantindo que o resultado não fica preso num mínimo local.
+
+---
+
+# Conclusão
+
+A análise integrada desta segunda fase permite tirar três conclusões principais.
+Em primeiro lugar, a idade não estrutura o transcriptoma tumoral. A PCA e o MDS clássico mostram que as amostras de doentes jovens e idosos se distribuem de forma completamente intercalada, sem qualquer agrupamento discreto.
+Em segundo lugar, o sexo biológico é o fator dominante na variabilidade global dos dados. O MDS Leading LogFC, o t-SNE e o UMAP, coloridos por sexo, revelam uma separação clara entre amostras femininas e masculinas. Esta separação é confirmada pelo clustering hierárquico, onde genes do cromossoma Y (RPS4Y1, DDX3Y, KDM5D, UTY) e o XIST formam clusters muito nítidos no dendrograma e no heatmap.
+Em terceiro lugar, o resultado mais expressivo desta fase vem do k-means: ao agrupar as amostras em dois clusters sem qualquer informação clínica, o algoritmo separou quase perfeitamente as amostras por sexo, o Cluster 1 ficou com 262 amostras femininas e 0 masculinas, e o Cluster 2 com 227 amostras masculinas e apenas 2 femininas. Os clusters não corresponderam ao estádio nem à idade, confirmando que o sexo é a variável que mais determina o perfil de expressão génica global nesta coorte.
+Estes resultados reforçam a importância de controlar o efeito do sexo nas análises supervisionadas, como foi feito na Fase 1 com o modelo limma.

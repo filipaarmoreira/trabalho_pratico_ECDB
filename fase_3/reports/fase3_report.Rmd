@@ -1,0 +1,157 @@
+---
+title: "Fase 3 – Análise Preditiva: LUAD (TCGA PanCancer Atlas)"
+author: "Ana Filipa Moreira, Diana Oliveira, Márcia Silva e Rodolfo Ferreira"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    number_sections: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo      = FALSE,
+  message   = FALSE,
+  warning   = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 6
+)
+
+eset_ml <- readRDS("../data/processed/eset_ml.rds")
+```
+
+Nesta terceira fase pretende-se:
+
+* desenvolver e comparar modelos de aprendizagem automática supervisionada para classificação do estádio tumoral (Early vs Advanced)
+* aplicar técnicas de seleção de atributos, incluindo filtro baseado em expressão diferencial (limma), seleção embedded (Elastic Net) e seleção recursiva de atributos (RFE)
+* avaliar o desempenho preditivo dos modelos através de validação cruzada e métricas no conjunto de teste independente
+* identificar genes com maior poder discriminativo entre os grupos Early e Advanced
+* integrar os resultados preditivos com a estrutura biológica dos dados através de heatmap dos genes mais relevantes
+
+
+## Estrutura da análise
+
+A análise da terceira fase é complementada pelo seguinte script:
+
+* 09_predictive_analysis.R — análise preditiva supervisionada (Elastic Net, Random Forest, SVM)
+
+
+
+
+## Introdução
+
+Este trabalho dá continuidade à análise do conjunto de dados de expressão génica no contexto do adenocarcinoma do pulmão (Lung Adenocarcinoma, LUAD), focando-se agora na aplicação de métodos de aprendizagem automática supervisionada para a classificação do estádio tumoral.
+
+Partindo do ExpressionSet integrado construído nas fases anteriores, esta terceira fase tem como objetivo central desenvolver e comparar modelos preditivos capazes de distinguir tumores em estádio precoce (Early: estádios I e II) de tumores em estádio avançado (Advanced: estádios III e IV). Para tal, foram implementados três abordagens complementares — Elastic Net, Random Forest e Support Vector Machine com kernel RBF — avaliadas com base em métricas de desempenho padronizadas e validação cruzada repetida.
+
+A seleção de atributos constitui um elemento central desta análise, dado o elevado número de genes disponíveis (9210) face ao número de amostras. Foram combinadas três estratégias: filtragem baseada em expressão diferencial com limma, seleção embedded pelo Elastic Net e seleção recursiva de atributos (RFE) com Random Forest. A identificação de genes com maior poder discriminativo permite não só melhorar o desempenho preditivo, como também extrair conhecimento biológico relevante sobre os mecanismos moleculares associados à progressão tumoral no LUAD.
+
+```{r source_script, results='hide', message=FALSE, warning=FALSE}
+source("../scripts/09_predictive_analysis.R")
+```
+
+
+## Preparação dos dados e seleção de atributos
+
+O conjunto de dados utilizado é composto por 508 amostras, após exclusão de casos com estádio tumoral não definido, das quais 398 pertencem ao grupo Early e 110 ao grupo Advanced. Os dados foram divididos em conjunto de treino (75%) e conjunto de teste (25%), com estratificação pela variável resposta para preservar as proporções dos grupos.
+
+A seleção inicial de atributos foi realizada com base em expressão diferencial (limma), ajustando para as covariáveis idade e sexo, retendo os 500 genes com maior associação ao estádio tumoral. Esta abordagem de filtro permitiu reduzir substancialmente a dimensionalidade dos dados antes do treino dos modelos, minimizando o risco de overfitting e o custo computacional.
+
+As amostras com valores em falta na variável AGE (n=16 no conjunto de treino) foram excluídas da etapa de seleção de atributos por limma, sendo no entanto incluídas no treino dos modelos através das matrizes X_train e X_test, que utilizam diretamente os valores de expressão génica dos 500 genes selecionados.
+
+
+## Modelo 1 – Elastic Net
+
+O Elastic Net é um modelo de regressão penalizada que combina as penalizações L1 (Lasso) e L2 (Ridge), controladas pelos hiperparâmetros alpha e lambda. A penalização L1 promove a esparsidade do modelo, selecionando automaticamente um subconjunto de genes relevantes (seleção embedded), enquanto a penalização L2 estabiliza os coeficientes em situações de colinearidade. O modelo foi treinado com validação cruzada repetida (5-fold, 3 repetições) e otimizado segundo a métrica AUC-ROC.
+
+#### Melhores hiperparâmetros e genes selecionados
+
+A otimização foi realizada sobre uma grelha de 5 valores de alpha (0 a 1) e 25 valores de lambda (10⁻⁴ a 10⁰). O modelo final reteve apenas os genes com coeficiente não nulo, correspondendo à seleção embedded. Os genes com maior coeficiente absoluto representam os marcadores moleculares com maior contribuição para a distinção entre estádios.
+
+#### Avaliação no conjunto de teste
+
+O desempenho do Elastic Net foi avaliado no conjunto de teste independente através da matriz de confusão, accuracy, sensibilidade, especificidade e AUC-ROC. A curva ROC sintetiza a capacidade discriminativa do modelo ao longo de todos os limiares de decisão.
+
+
+## Modelo 2 – Random Forest
+
+O Random Forest é um método de ensemble baseado em múltiplas árvores de decisão treinadas sobre subamostras aleatórias dos dados e subconjuntos aleatórios de atributos. A combinação das previsões individuais por votação maioritária confere ao modelo robustez face ao overfitting e capacidade de captar relações não lineares entre os genes e o estádio tumoral. O hiperparâmetro mtry, que controla o número de variáveis consideradas em cada divisão, foi otimizado por validação cruzada.
+
+#### Melhor hiperparâmetro e importância de genes
+
+Foram treinadas 500 árvores para cada configuração de mtry. A importância de cada gene foi calculada como a média da diminuição do índice de Gini ao longo de todas as árvores, permitindo identificar os genes mais discriminativos de forma agnóstica ao sinal de regulação.
+
+#### Avaliação no conjunto de teste
+
+O Random Forest foi avaliado com as mesmas métricas que o Elastic Net, permitindo uma comparação direta entre os modelos.
+
+
+## Modelo 3 – SVM com kernel RBF
+
+O Support Vector Machine (SVM) com kernel RBF (Radial Basis Function) é um classificador que procura o hiperplano de margem máxima no espaço de características transformado pelo kernel. O parâmetro C controla a tolerância ao erro de classificação, enquanto sigma define a largura do kernel RBF e, consequentemente, a complexidade da fronteira de decisão. Ambos os hiperparâmetros foram otimizados por validação cruzada.
+
+#### Melhores hiperparâmetros
+
+A grelha de pesquisa cobriu 5 valores de C (10⁻² a 10²) e 5 valores de sigma (10⁻⁴ a 10⁻¹), permitindo explorar modelos desde configurações suaves até fronteiras de decisão mais complexas.
+
+#### Avaliação no conjunto de teste
+
+O SVM foi avaliado com as mesmas métricas, completando a comparação entre os três modelos.
+
+
+## Comparação dos modelos
+
+```{r tabela_comparacao}
+print(perf_table)
+```
+
+A comparação dos três modelos foi realizada através de dois eixos complementares: o desempenho na validação cruzada (boxplot de AUC por fold) e o desempenho no conjunto de teste independente (tabela resumo). O teste estatístico de diferenças entre modelos (diff resamples) permite avaliar se as diferenças observadas são estatisticamente significativas ou dentro da variabilidade esperada por amostragem.
+
+#### Curvas ROC
+
+As curvas ROC dos três modelos no conjunto de teste permitem comparar visualmente a capacidade discriminativa de cada abordagem. A AUC sintetiza este desempenho num único valor, sendo que valores mais próximos de 1 indicam maior poder de classificação.
+
+#### Boxplot de AUC por validação cruzada
+
+O boxplot compara a distribuição da AUC obtida em cada fold e repetição da validação cruzada, permitindo avaliar a estabilidade e variabilidade do desempenho de cada modelo. Modelos com menor dispersão e maior mediana são preferíveis em termos de generalização.
+
+
+## Importância de genes
+
+#### Top 20 genes – Random Forest
+
+Os genes com maior importância no Random Forest correspondem aos atributos que mais contribuíram para a pureza dos nós ao longo das 500 árvores. Estes genes representam marcadores moleculares com forte associação ao estádio tumoral, identificados de forma não paramétrica e independente do sinal de regulação.
+
+#### Top 20 genes – Elastic Net
+
+Os genes selecionados pelo Elastic Net com maior coeficiente absoluto representam os marcadores com maior contribuição linear para a classificação. O sinal do coeficiente indica a direção da associação: genes com coeficiente positivo encontram-se sobre-expressos em tumores Advanced, enquanto genes com coeficiente negativo apresentam maior expressão em tumores Early.
+
+#### Genes em consenso
+
+A interseção dos top 50 genes do Random Forest e do Elastic Net identifica um conjunto de genes robustamente associados ao estádio tumoral, independentemente do método utilizado. Estes genes constituem candidatos prioritários para validação experimental, dado que a sua relevância é suportada por duas abordagens metodológicas distintas.
+
+
+## Seleção recursiva de atributos (RFE)
+
+A seleção recursiva de atributos (RFE) com Random Forest foi aplicada aos 200 genes mais significativos pelo limma, com o objetivo de identificar o subconjunto ótimo de genes que maximiza o desempenho preditivo. Foram testados subconjuntos de 10, 20, 30, 50 e 100 genes, avaliados por validação cruzada de 5 folds.
+
+O número ótimo de genes identificado pelo RFE representa o ponto de compromisso entre complexidade do modelo e capacidade preditiva. Os genes selecionados constituem um painel mínimo com elevado poder discriminativo, com potencial interesse clínico para a classificação do estádio tumoral.
+
+
+## Heatmap dos genes mais importantes
+
+O heatmap representa o perfil de expressão dos genes em consenso entre o Random Forest e o Elastic Net (ou, na ausência de genes comuns suficientes, dos top genes do Random Forest) em todas as amostras do dataset. A anotação das colunas inclui o estádio tumoral (STAGE_GROUP) e o sexo (SEX), permitindo avaliar visualmente a associação entre a expressão génica e as variáveis clínicas.
+
+A organização por clustering hierárquico evidencia padrões de co-expressão entre genes e permite identificar subgrupos de amostras com perfis moleculares semelhantes. A separação entre os grupos Early e Advanced no heatmap reflete o poder discriminativo do painel de genes identificado.
+
+
+## Conclusão
+
+A análise preditiva supervisionada aplicada à coorte TCGA-LUAD demonstrou que é possível classificar o estádio tumoral (Early vs Advanced) com base no perfil de expressão génica, utilizando modelos de aprendizagem automática. Os três modelos implementados — Elastic Net, Random Forest e SVM com kernel RBF — apresentaram desempenhos competitivos, avaliados por AUC-ROC, accuracy, sensibilidade e especificidade no conjunto de teste independente.
+
+A seleção de atributos revelou-se fundamental para lidar com a elevada dimensionalidade dos dados transcriptómicos. A combinação de três estratégias complementares — filtragem por expressão diferencial, seleção embedded pelo Elastic Net e RFE com Random Forest — permitiu identificar um conjunto robusto de genes associados ao estádio tumoral. Os genes em consenso entre o Random Forest e o Elastic Net constituem candidatos prioritários para validação experimental, dado que a sua relevância é suportada por metodologias distintas.
+
+Em conjunto, estes resultados sublinham o potencial da integração de dados transcriptómicos com métodos de aprendizagem automática para a estratificação molecular do adenocarcinoma do pulmão, contribuindo para abordagens de medicina de precisão baseadas no perfil molecular individual do tumor.
