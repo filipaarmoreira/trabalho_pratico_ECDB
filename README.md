@@ -79,3 +79,6 @@ Principais ferramentas utilizadas:
 3. Executar os scripts pela ordem indicada em cada fase.
 4. Abrir os relatórios HTML para consultar os resultados detalhados.
 
+## Trabalho 2 — Extração de Conhecimento de Dados de Espectroscopia Raman
+Para além do trabalho principal, este repositório inclui também uma análise de espectros Raman de compostos orgânicos puros, desenvolvida em Python, disponível na pasta trabalho2_raman/.
+
