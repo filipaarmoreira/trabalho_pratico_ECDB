@@ -55,5 +55,5 @@ O projeto foi desenvolvido em **Python 3**, com recurso às seguintes biblioteca
 
 ## Dados
 
-Os dados de espectroscopia Raman estão incluídos neste repositório. 
+Os dados de espectroscopia Raman não estão incluídos neste repositório. 
 
