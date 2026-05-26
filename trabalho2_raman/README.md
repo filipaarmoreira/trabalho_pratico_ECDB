@@ -2,12 +2,6 @@
 
 Análise de espectros Raman de compostos orgânicos puros, com o objetivo de explorar padrões espectrais, agrupar compostos por semelhança química e construir modelos de classificação automática. O trabalho foi desenvolvido em Python e organizado num notebook Jupyter.
 
-## Autores
-- Ana Filipa Moreira
-- Diana Oliveira
-- Márcia Silva
-- Rodolfo Ferreira
-
 ## Compostos Analisados (Grupo 3)
 
 | Composto | Família Química |
